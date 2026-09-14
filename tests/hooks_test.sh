@@ -53,8 +53,12 @@ run_hook() {
     sh -c "$command"
   else
     local -a argv=()
+    local a
     while IFS= read -r a; do
-      argv+=("$(printf '%s' "$a" | sed -e 's#\${CLAUDE_PLUGIN_ROOT}#'"$PLUGIN_ROOT"'#')")
+      # Parameter expansion, not sed: sed treats backslashes in the replacement
+      # as escapes, so a Windows ${CLAUDE_PLUGIN_ROOT} would be eaten here --
+      # the same class of bug this suite exists to catch.
+      argv+=("${a/\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN_ROOT}")
     done < <(jq -r --arg e "$event" '.hooks[$e][0].hooks[0].args[]' "$HOOKS_JSON")
     "$command" "${argv[@]}"
   fi
@@ -99,24 +103,33 @@ HOOKS=$(jq -r '
     else [$event, "shell", (.command // "")]
     end | @tsv' "$HOOKS_JSON")
 
+# Resolved against this checkout rather than $PLUGIN_ROOT: whether a Windows
+# path survives is what the behavioural runs below cover, while these two checks
+# are about the files themselves.
 while IFS="$(printf '\t')" read -r event form script; do
   [ -n "$script" ] || continue
-  script=$(printf '%s' "$script" | sed -e 's/"//g' -e 's#\${CLAUDE_PLUGIN_ROOT}#'"$PLUGIN_ROOT"'#')
+  script=${script//\"/}                              # shell form quotes the variable
+  script=${script//$'\r'/}                           # CRLF checkouts on Windows
+  rel=${script#*\$\{CLAUDE_PLUGIN_ROOT\}}            # -> /viz/hooks/forward.sh
+  rel=${rel#/}
 
-  if [ -f "$script" ]; then
+  if [ -f "$REPO_ROOT/$rel" ]; then
     ok "$event: script exists"
   else
-    fail "$event: script exists" "$script"
+    fail "$event: script exists" "$REPO_ROOT/$rel"
     continue
   fi
 
   # Only shell form runs the file itself; exec form hands it to an interpreter,
-  # so the mode does not matter there.
+  # so the mode does not matter there. Asserted against the mode git records,
+  # not the working tree: git does not materialise permission bits on Windows,
+  # so -x there says nothing, while the recorded mode is what ships to users.
   if [ "$form" = shell ]; then
-    if [ -x "$script" ]; then
-      ok "$event: script is executable"
+    mode=$(cd "$REPO_ROOT" && git ls-files -s -- "$rel" 2>/dev/null | awk '{print $1}')
+    if [ "$mode" = 100755 ]; then
+      ok "$event: script is executable in git ($mode)"
     else
-      fail "$event: script is executable" "shell form runs the file directly; mode 644 exits 126"
+      fail "$event: script is executable in git" "got ${mode:-<not tracked>}; shell form runs the file directly, and mode 644 exits 126"
     fi
   fi
 done <<EOF
