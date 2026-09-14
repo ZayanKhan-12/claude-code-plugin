@@ -100,10 +100,9 @@ bare interpreter, that every referenced script exists and is executable, and
 that both hooks exit `0` on the host. It stubs `uname` to check the
 `MINGW64_NT` / `MSYS_NT` / `CYGWIN_NT` / `Linux` paths are silent no-ops.
 
-Run it on Windows under Git Bash to cover the platform #27 reported, and set
-`CLAUDE_PLUGIN_ROOT` to a native backslash path when you do — Git Bash reports
-`$PWD` in Unix form, so it would otherwise never exercise the path shape that
-caused the bug.
+CI runs it on macOS, Linux and Windows. One Windows job injects
+`CLAUDE_PLUGIN_ROOT` as a native backslash path, because Git Bash reports `$PWD`
+in Unix form and would otherwise never exercise the path shape that caused #27.
 
 The suite makes no network calls and never opens the ddviz socket.
 
